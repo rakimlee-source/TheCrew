@@ -9,7 +9,16 @@ public class GoalSystem : MonoBehaviour
     public float spinSpeed = 150f; 
 
     [Header("Victory Effects")]
-    public ParticleSystem smokeEffect; // Drag a Smoke Particle System here!
+    public ParticleSystem smokeEffect;
+    
+    // --- NEW AUDIO SETTINGS ---
+    [Header("Audio")]
+    [SerializeField] private AudioClip victorySound; // Drag your sound file here
+    [SerializeField] [Range(0f, 1f)] private float volume = 1f;
+
+    [Header("Post-Game Rewards")]
+    [SerializeField] private GameObject rewardObject1;
+    [SerializeField] private GameObject rewardObject2;
 
     private int score = 0;
     private bool isRelocating = false;
@@ -24,6 +33,9 @@ public class GoalSystem : MonoBehaviour
     {
         originalPosition = transform.position;
         originalRotation = transform.rotation;
+
+        if (rewardObject1 != null) rewardObject1.SetActive(false);
+        if (rewardObject2 != null) rewardObject2.SetActive(false);
     }
 
     void Update()
@@ -39,7 +51,6 @@ public class GoalSystem : MonoBehaviour
         if (isRelocating || gameEnded) return;
         
         score++;
-        Debug.Log($"Goal Scored! Total: {score}");
 
         if (isFinalStage)
         {
@@ -60,7 +71,6 @@ public class GoalSystem : MonoBehaviour
     {
         isRelocating = true;
         ToggleVisible(false); 
-
         yield return new WaitForSeconds(teleportDelay);
 
         if (score >= 3)
@@ -77,7 +87,6 @@ public class GoalSystem : MonoBehaviour
                 newIndex = Random.Range(0, goalLocations.Length);
             }
             lastLocationIndex = newIndex;
-
             transform.position = goalLocations[newIndex].position;
             transform.rotation = goalLocations[newIndex].rotation;
         }
@@ -90,21 +99,28 @@ public class GoalSystem : MonoBehaviour
     {
         gameEnded = true; 
         
-        // 1. Play the smoke effect at the ring's position
+        // 1. Play the victory sound at the current position
+        if (victorySound != null)
+        {
+            AudioSource.PlayClipAtPoint(victorySound, transform.position, volume);
+        }
+
+        // 2. Start smoke
         if (smokeEffect != null)
         {
             smokeEffect.transform.position = transform.position;
             smokeEffect.Play();
         }
 
-        // 2. Wait just a tiny bit for the smoke to "cover" the objects
         yield return new WaitForSeconds(0.2f);
         
-        // 3. Poof! They're gone
+        // 3. Goal Disappears
         ToggleVisible(false); 
         if (ballObject != null) ballObject.SetActive(false);
 
-        Debug.Log("CHALLENGE COMPLETE: Up in smoke!");
+        // 4. Rewards Appear
+        if (rewardObject1 != null) rewardObject1.SetActive(true);
+        if (rewardObject2 != null) rewardObject2.SetActive(true);
     }
 
     void ToggleVisible(bool visible) 

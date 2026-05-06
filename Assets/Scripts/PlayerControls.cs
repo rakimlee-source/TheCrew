@@ -1,6 +1,7 @@
 using Unity.VisualScripting;
 using System.Collections;
 using UnityEngine;
+using System;
 
 public class PlayerControls : MonoBehaviour
 {
@@ -25,14 +26,19 @@ public class PlayerControls : MonoBehaviour
     
     [SerializeField] float pushPower = 2.0f; 
     
+    // --- PLATFORM TRACKING VARIABLES ---
+    private GameObject currentPlatform;
+    private Vector3 lastPlatformPosition;
+    private Vector3 platformVelocity;
+
     // --- KICK SETTINGS ---
     [SerializeField] float kickPower = 18f; 
     [SerializeField] float kickUpwardForce = 0.5f;
     [SerializeField] string kickAnimationName = "Kicking";
     [SerializeField] string movingKickAnimationName = "MovingKick"; 
     private bool isKicking = false;
-    [SerializeField] float kickReach = 0.8f; // Your preferred setting
-    [SerializeField] float kickHitRadius = 0.4f; // Your preferred setting
+    [SerializeField] float kickReach = 0.8f; 
+    [SerializeField] float kickHitRadius = 0.4f; 
 
     [SerializeField] Transform spawnPoint;
     [SerializeField] float deadZoneHeight = -20f;
@@ -49,9 +55,7 @@ public class PlayerControls : MonoBehaviour
 
     void Start()
     {
-        // FIX: Allows SphereCast to detect collisions even if the player is touching the object
         Physics.queriesHitBackfaces = true; 
-
         gravityValue = -20;
         animator = activeChar.GetComponent<Animator>();
 
@@ -69,10 +73,7 @@ public class PlayerControls : MonoBehaviour
 
         groundedPlayer = controller.isGrounded;
 
-        if (wasGrounded && !groundedPlayer)
-        {
-            fallStartPosition = transform.position.y;
-        }
+        if (wasGrounded && !groundedPlayer) fallStartPosition = transform.position.y;
 
         if (groundedPlayer && playerVelocity.y < 0)
         {
@@ -81,15 +82,20 @@ public class PlayerControls : MonoBehaviour
             jumpCount = 0;
         }
 
-        if (!groundedPlayer && transform.position.y < fallStartPosition - maxFallDistance)
+        // --- CALCULATE PLATFORM VELOCITY ---
+        if (groundedPlayer && currentPlatform != null)
         {
-            Respawn();
+            platformVelocity = currentPlatform.transform.position - lastPlatformPosition;
+            lastPlatformPosition = currentPlatform.transform.position;
+        }
+        else
+        {
+            platformVelocity = Vector3.zero;
+            currentPlatform = null;
         }
 
-        if (transform.position.y < deadZoneHeight)
-        {
-            Respawn();
-        }
+        if (!groundedPlayer && transform.position.y < fallStartPosition - maxFallDistance) Respawn();
+        if (transform.position.y < deadZoneHeight) Respawn();
 
         playerVelocity.y += gravityValue * Time.deltaTime;
 
@@ -123,6 +129,7 @@ public class PlayerControls : MonoBehaviour
             {
                 isJumping = true;
                 jumpCount++;
+                currentPlatform = null; // Clear platform on jump
 
                 if (jumpCount > 1)
                 {
@@ -146,25 +153,25 @@ public class PlayerControls : MonoBehaviour
             }
         }
 
+        // --- MOVE COMMAND (Includes Platform Velocity) ---
         Vector3 movement = forward * curSpeed;
         movement.y = playerVelocity.y;
-        controller.Move(movement * Time.deltaTime);
+        
+        // This is the line that fixes the "pulling through objects"
+        controller.Move((movement * Time.deltaTime) + platformVelocity);
 
         if (!isKicking)
         {
             if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.D))
             {
-                controller.minMoveDistance = 0.001f;
                 if (isJumping == false)
                 {
                     if (Input.GetKey(KeyCode.S)) PlayAnimation("WalkBackwards");
-                    else if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.D)) 
-                        PlayAnimation(isRunning ? "Run" : "Walk");
+                    else PlayAnimation(isRunning ? "Run" : "Walk");
                 }
             }
             else
             {
-                controller.minMoveDistance = 0.001f;
                 if (isJumping == false) PlayAnimation("Idle");
             }
         }
@@ -172,45 +179,54 @@ public class PlayerControls : MonoBehaviour
         wasGrounded = groundedPlayer;
     }
 
+    private void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        // NO PARENTING - Just identify the platform
+        if (hit.gameObject.CompareTag("Moving") && hit.normal.y > 0.5f)
+        {
+            if (currentPlatform != hit.gameObject)
+            {
+                currentPlatform = hit.gameObject;
+                lastPlatformPosition = currentPlatform.transform.position;
+            }
+        }
+
+        Rigidbody body = hit.collider.attachedRigidbody;
+        if (body == null || body.isKinematic || hit.moveDirection.y < -0.3f) return;
+
+        if (hit.gameObject.CompareTag("Kickable") || hit.gameObject.CompareTag("Movable"))
+        {
+            Vector3 pushDir = new Vector3(hit.moveDirection.x, 0, hit.moveDirection.z);
+            body.AddForce(pushDir * pushPower, ForceMode.VelocityChange);
+        }
+    }
+
+    // --- COROUTINES AND OTHER METHODS ---
+
     private IEnumerator PerformKick(bool isMovingForward)
     {
         isKicking = true;
         string animToPlay = isMovingForward ? movingKickAnimationName : kickAnimationName;
         PlayAnimation(animToPlay);
-        
         yield return new WaitForSeconds(0.4f); 
-
-        RaycastHit hit;
-        
-        // 1. Start the ray SLIGHTLY BEHIND the center of the player
-        // This ensures that even if you are touching the ball, the sphere "sweeps" into it.
         Vector3 rayStart = transform.position + controller.center - (transform.forward * 0.3f);
-        
-        // 2. We increase the reach to cover the 0.3f we moved back, plus your desired 1.0f reach
         float totalReach = kickReach + 0.3f;
-
-        // 3. Perform the sweep
-        if (Physics.SphereCast(rayStart, kickHitRadius, transform.forward, out hit, totalReach))
+        if (Physics.SphereCast(rayStart, kickHitRadius, transform.forward, out RaycastHit hit, totalReach))
         {
             Rigidbody body = hit.collider.attachedRigidbody;
             if (body != null && !body.isKinematic && hit.collider.CompareTag("Kickable"))
             {
-                // Force calculation
                 Vector3 kickDir = (transform.forward + Vector3.up * kickUpwardForce).normalized;
                 body.AddForce(kickDir * kickPower, ForceMode.Impulse);
             }
         }
-    
         yield return new WaitForSeconds(0.9f); 
         isKicking = false;
     }
 
     private void OnTriggerEnter(Collider other)
     {
-        if (other.CompareTag("Trap") && !isDead)
-        {
-            StartCoroutine(Die());
-        }
+        if (other.CompareTag("Trap") && !isDead) StartCoroutine(Die());
     }
 
     public IEnumerator Die()
@@ -229,42 +245,23 @@ public class PlayerControls : MonoBehaviour
         transform.position = spawnPoint.position;
         transform.rotation = spawnPoint.rotation;
         playerVelocity = Vector3.zero;
+        currentPlatform = null; // Important to reset this
         controller.enabled = true;
     }
 
     void PlayAnimation(string animationName)
     {
-        if (currentAnimation != animationName)
-        {
-            animator.Play(animationName);
-            currentAnimation = animationName;
-        }
+        if (currentAnimation != animationName) { animator.Play(animationName); currentAnimation = animationName; }
     }
 
     void ForceAnimationRestart(string animationName)
     {
-        animator.Play(animationName, -1, 0f);
-        currentAnimation = animationName;
+        animator.Play(animationName, -1, 0f); currentAnimation = animationName;
     }
 
-    private void OnControllerColliderHit(ControllerColliderHit hit)
+    public void UpdateSpawnPoint(Vector3 newPosition, Quaternion newRotation)
     {
-        Rigidbody body = hit.collider.attachedRigidbody;
-        if (body == null || body.isKinematic) return;
-        if (hit.moveDirection.y < -0.3f) return;
-
-        bool isKickable = hit.gameObject.CompareTag("Kickable");
-        bool isMovable = hit.gameObject.CompareTag("Movable");
-
-        if (!isKicking && (isMovable || isKickable))
-        {
-            Vector3 pushDir = new Vector3(hit.moveDirection.x, 0, hit.moveDirection.z);
-            body.AddForce(pushDir * pushPower, ForceMode.VelocityChange);
-        }
-        else if (isKicking && isMovable)
-        {
-            Vector3 pushDir = new Vector3(hit.moveDirection.x, 0, hit.moveDirection.z);
-            body.AddForce(pushDir * pushPower, ForceMode.VelocityChange);
-        }
+        spawnPoint.position = newPosition;
+        spawnPoint.rotation = newRotation;
     }
 }
