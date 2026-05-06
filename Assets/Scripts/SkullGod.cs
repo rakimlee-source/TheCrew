@@ -8,7 +8,10 @@ public class FloatingObjectController : MonoBehaviour
 
     [Header("Transition Settings")]
     public float scaleSpeed = 5f;
-    
+
+    [Header("Dialogue")]
+    public QuestDialogueData questDialogueData;   // ← Bara ett fält nu
+
     private Vector3 startPosition;
     private Vector3 targetScale;
     private bool isHiding = false;
@@ -28,13 +31,13 @@ public class FloatingObjectController : MonoBehaviour
         Vector3 currentTarget = isHiding ? Vector3.zero : targetScale;
         transform.localScale = Vector3.Lerp(transform.localScale, currentTarget, Time.deltaTime * scaleSpeed);
 
-        // Deactivate object fully once it's small enough to save performance
+        // Deactivate object fully once it's small enough
         if (isHiding && transform.localScale.magnitude < 0.01f)
         {
             gameObject.SetActive(false);
         }
 
-        // 2. Bobbing Logic (only if active)
+        // 2. Bobbing Logic
         float newY = Mathf.Sin(Time.time * frequency) * amplitude;
         transform.position = startPosition + new Vector3(0, newY, 0);
     }
@@ -44,14 +47,22 @@ public class FloatingObjectController : MonoBehaviour
         isHiding = false;
         transform.position = newLocation;
         transform.rotation = newRotation;
-        startPosition = newLocation; 
-        // Reset bobbing anchor to new spot
+        startPosition = newLocation;
         gameObject.SetActive(true);
+
+        // Trigger dialogue + cutscene om vi har data
+        if (questDialogueData != null && questDialogueData.rootNode != null)
+        {
+            DialogueManager.Instance.StartDialogue(questDialogueData.rootNode, transform);
+        }
+        else
+        {
+            Debug.LogWarning("FloatingObjectController: questDialogueData saknas på " + gameObject.name);
+        }
     }
 
     public void Disappear()
     {
         isHiding = true;
-        // We don't SetActive(false) immediately so the scale-down animation can play
     }
 }
